@@ -167,6 +167,53 @@ h1 {
   cursor: not-allowed;
 }
 
+.region-selector {
+  width: 100%;
+  max-width: 280px;
+}
+
+.region-selector select {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid #333;
+  background: #16213e;
+  color: #e0e0e0;
+  font-size: 0.9rem;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23888' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+
+.region-selector select:focus {
+  outline: none;
+  border-color: #555;
+}
+
+.game-btn.stop {
+  border-color: #e94560;
+  color: #e94560;
+}
+
+.game-btn.stop:hover {
+  background: #e9456022;
+}
+
+.game-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.running-game {
+  color: #4ecca3;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+}
+
 .proxy-status {
   margin-top: auto;
   padding: 8px 16px;

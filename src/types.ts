@@ -16,3 +16,8 @@ export type CertStatus = {
   server_generated: boolean;
   ca_trusted: boolean;
 };
+
+export type RegionInfo = {
+  code: string;
+  name: string;
+};

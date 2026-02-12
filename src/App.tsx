@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
-import { CertStatus, StatusInfo } from "./types";
+import { CertStatus, RegionInfo, StatusInfo } from "./types";
 
 function App() {
   const [status, setStatus] = useState<StatusInfo>({
@@ -10,11 +10,15 @@ function App() {
     connected_game: null,
   });
   const [certStatus, setCertStatus] = useState<CertStatus | null>(null);
+  const [regions, setRegions] = useState<RegionInfo[]>([]);
+  const [selectedRegion, setSelectedRegion] = useState("");
   const [installing, setInstalling] = useState(false);
+  const [launching, setLaunching] = useState(false);
 
   useEffect(() => {
     invoke<StatusInfo>("get_status").then(setStatus);
     invoke<CertStatus>("get_cert_status").then(setCertStatus);
+    invoke<RegionInfo[]>("get_regions").then(setRegions);
   }, []);
 
   async function toggleStealth() {
@@ -26,8 +30,20 @@ function App() {
   }
 
   async function handleLaunch(game: string) {
-    const result = await invoke<string>("launch_game", { game });
-    console.log(result);
+    setLaunching(true);
+    try {
+      const updated = await invoke<StatusInfo>("launch_game", { game });
+      setStatus(updated);
+    } catch (e) {
+      console.error("Launch failed:", e);
+    } finally {
+      setLaunching(false);
+    }
+  }
+
+  async function handleStop() {
+    const updated = await invoke<StatusInfo>("stop_proxy");
+    setStatus(updated);
   }
 
   async function handleInstallCa() {
@@ -43,8 +59,21 @@ function App() {
     }
   }
 
+  async function handleRegionChange(code: string) {
+    setSelectedRegion(code);
+    if (code) {
+      try {
+        await invoke("set_region", { region: code });
+      } catch (e) {
+        console.error("Failed to set region:", e);
+      }
+    }
+  }
+
   const isOffline = status.stealth_mode === "Offline";
-  const needsCaInstall = certStatus && certStatus.ca_generated && !certStatus.ca_trusted;
+  const isRunning = status.proxy_status === "Running";
+  const needsCaInstall =
+    certStatus && certStatus.ca_generated && !certStatus.ca_trusted;
 
   return (
     <main className="container">
@@ -79,20 +108,49 @@ function App() {
         </p>
       </div>
 
-      <div className="game-buttons">
-        <button
-          className="game-btn lol"
-          onClick={() => handleLaunch("league_of_legends")}
+      <div className="region-selector">
+        <select
+          value={selectedRegion}
+          onChange={(e) => handleRegionChange(e.target.value)}
         >
-          Launch LoL
-        </button>
-        <button
-          className="game-btn val"
-          onClick={() => handleLaunch("valorant")}
-        >
-          Launch VALORANT
-        </button>
+          <option value="">Auto-detect region</option>
+          {regions.map((r) => (
+            <option key={r.code} value={r.code}>
+              {r.name}
+            </option>
+          ))}
+        </select>
       </div>
+
+      {!isRunning ? (
+        <div className="game-buttons">
+          <button
+            className="game-btn lol"
+            onClick={() => handleLaunch("league_of_legends")}
+            disabled={launching}
+          >
+            {launching ? "Launching..." : "Launch LoL"}
+          </button>
+          <button
+            className="game-btn val"
+            onClick={() => handleLaunch("valorant")}
+            disabled={launching}
+          >
+            {launching ? "Launching..." : "Launch VALORANT"}
+          </button>
+        </div>
+      ) : (
+        <div className="game-buttons">
+          <button className="game-btn stop" onClick={handleStop}>
+            Stop Proxy
+          </button>
+          {status.connected_game && (
+            <span className="running-game">
+              Playing: {status.connected_game.replace("_", " ")}
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="proxy-status">
         {certStatus && (
@@ -103,7 +161,7 @@ function App() {
             {" | "}
           </span>
         )}
-        {status.proxy_status === "Running"
+        {isRunning
           ? "Proxy active"
           : status.proxy_status === "Idle"
             ? "Proxy idle"

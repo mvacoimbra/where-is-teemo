@@ -176,6 +176,17 @@ pub fn get_regions() -> Vec<RegionInfo> {
         .collect()
 }
 
+#[tauri::command]
+pub fn set_region(region: String, state: State<'_, AppState>) -> Result<(), String> {
+    let chat_host = riot::config::chat_server_for_region(&region)
+        .ok_or_else(|| format!("Unknown region: {region}"))?;
+
+    let mut inner = state.inner.lock().unwrap();
+    inner.detected_region = Some(region);
+    inner.detected_chat_host = Some(chat_host.to_string());
+    Ok(())
+}
+
 #[derive(serde::Serialize)]
 pub struct CertStatus {
     pub ca_generated: bool,
