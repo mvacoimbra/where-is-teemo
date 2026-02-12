@@ -17,6 +17,8 @@ pub fn run() {
             commands::get_status,
             commands::set_stealth_mode,
             commands::launch_game,
+            commands::start_proxy,
+            commands::stop_proxy,
             commands::get_cert_status,
             commands::install_ca,
         ])

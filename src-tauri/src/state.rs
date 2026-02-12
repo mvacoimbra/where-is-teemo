@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+use tokio::sync::watch;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum StealthMode {
@@ -29,6 +30,8 @@ pub struct AppStateInner {
     pub stealth_mode: StealthMode,
     pub proxy_status: ProxyStatus,
     pub connected_game: Option<String>,
+    pub mode_tx: Option<watch::Sender<StealthMode>>,
+    pub shutdown_tx: Option<watch::Sender<bool>>,
 }
 
 impl Default for AppState {
@@ -38,6 +41,8 @@ impl Default for AppState {
                 stealth_mode: StealthMode::Offline,
                 proxy_status: ProxyStatus::Idle,
                 connected_game: None,
+                mode_tx: None,
+                shutdown_tx: None,
             }),
         }
     }
