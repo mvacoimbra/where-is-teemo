@@ -10,6 +10,12 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_secs()
+        .init();
+
+    log::info!("Where Is Teemo starting");
+
     let app_state = AppState::default();
 
     tauri::Builder::default()
@@ -33,7 +39,6 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Minimize to tray instead of closing
                 api.prevent_close();
                 let _ = window.hide();
             }
@@ -65,7 +70,13 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let menu = Menu::with_items(
         app,
-        &[&offline_item, &online_item, &separator, &show_item, &quit_item],
+        &[
+            &offline_item,
+            &online_item,
+            &separator,
+            &show_item,
+            &quit_item,
+        ],
     )?;
 
     TrayIconBuilder::new()
@@ -80,6 +91,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(tx) = &inner.mode_tx {
                     let _ = tx.send(state::StealthMode::Offline);
                 }
+                log::info!("Stealth mode: Invisible (via tray)");
             }
             "online" => {
                 let state = app.state::<AppState>();
@@ -88,6 +100,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(tx) = &inner.mode_tx {
                     let _ = tx.send(state::StealthMode::Online);
                 }
+                log::info!("Stealth mode: Online (via tray)");
             }
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {
@@ -97,7 +110,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             "quit" => {
-                // Cleanup: stop proxy before quitting
+                log::info!("Quit requested — cleaning up");
                 let state = app.state::<AppState>();
                 let mut inner = state.inner.lock().unwrap();
                 if let Some(tx) = inner.shutdown_tx.take() {

@@ -16,6 +16,7 @@ pub struct ProxyConfig {
     pub remote_port: u16,
     pub server_cert_pem: String,
     pub server_key_pem: String,
+    #[allow(dead_code)]
     pub ca_cert_pem: String,
 }
 

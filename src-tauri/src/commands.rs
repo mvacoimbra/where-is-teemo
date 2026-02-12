@@ -69,11 +69,17 @@ pub async fn launch_game(
         inner.stealth_mode.clone()
     };
 
-    // Use a default chat host — will be updated once Riot client fetches config
-    let default_host = "br1.chat.si.riotgames.com".to_string();
+    // Use selected region's chat host, or default
+    let chat_host = {
+        let inner = state.inner.lock().unwrap();
+        inner.detected_chat_host.clone()
+    }
+    .unwrap_or_else(|| "na2.chat.si.riotgames.com".to_string());
+
+    log::info!("Using chat host: {chat_host}");
 
     let proxy_handle = proxy::start_proxy(
-        default_host,
+        chat_host,
         5223,
         server.cert_pem,
         server.key_pem,
