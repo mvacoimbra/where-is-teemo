@@ -32,6 +32,7 @@ pub struct AppStateInner {
     pub connected_game: Option<String>,
     pub mode_tx: Option<watch::Sender<StealthMode>>,
     pub shutdown_tx: Option<watch::Sender<bool>>,
+    pub config_shutdown_tx: Option<watch::Sender<bool>>,
 }
 
 impl Default for AppState {
@@ -43,6 +44,7 @@ impl Default for AppState {
                 connected_game: None,
                 mode_tx: None,
                 shutdown_tx: None,
+                config_shutdown_tx: None,
             }),
         }
     }

@@ -2,6 +2,8 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::proxy;
 use crate::proxy::certs;
+use crate::proxy::config_proxy;
+use crate::riot;
 use crate::state::{AppState, ProxyStatus, StatusInfo, StealthMode};
 
 #[tauri::command]
@@ -23,7 +25,6 @@ pub fn set_stealth_mode(mode: String, state: State<'_, AppState>) -> StatusInfo 
     };
     inner.stealth_mode = new_mode.clone();
 
-    // Update the proxy's mode channel in real-time
     if let Some(tx) = &inner.mode_tx {
         let _ = tx.send(new_mode);
     }
@@ -35,9 +36,10 @@ pub fn set_stealth_mode(mode: String, state: State<'_, AppState>) -> StatusInfo 
     }
 }
 
+/// Full launch flow: kill existing → start config proxy → start XMPP proxy → launch game.
 #[tauri::command]
-pub async fn start_proxy(
-    remote_host: String,
+pub async fn launch_game(
+    game: String,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<StatusInfo, String> {
@@ -46,16 +48,32 @@ pub async fn start_proxy(
         .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {e}"))?;
 
+    // 1. Kill existing Riot processes
+    if riot::process::is_riot_running() {
+        log::info!("Killing existing Riot processes");
+        riot::process::kill_riot_processes()?;
+    }
+
+    // 2. Ensure certs are ready
     let ca = certs::ensure_ca(&data_dir)?;
     let server = certs::generate_server_cert(&ca, &data_dir)?;
 
+    // 3. Start config proxy (intercepts Riot config, redirects chat to localhost)
+    let config_handle = config_proxy::start_config_proxy(5223).await?;
+    let config_port = config_handle.port;
+    let chat_host_rx = config_handle.chat_host_rx;
+
+    // 4. Start XMPP proxy (we'll use a default host, updated when config is fetched)
     let initial_mode = {
         let inner = state.inner.lock().unwrap();
         inner.stealth_mode.clone()
     };
 
-    let handle = proxy::start_proxy(
-        remote_host,
+    // Use a default chat host — will be updated once Riot client fetches config
+    let default_host = "br1.chat.si.riotgames.com".to_string();
+
+    let proxy_handle = proxy::start_proxy(
+        default_host,
         5223,
         server.cert_pem,
         server.key_pem,
@@ -64,11 +82,33 @@ pub async fn start_proxy(
     )
     .await?;
 
-    let mut inner = state.inner.lock().unwrap();
-    inner.proxy_status = ProxyStatus::Running;
-    inner.mode_tx = Some(handle.mode_tx);
-    inner.shutdown_tx = Some(handle.shutdown_tx);
+    // 5. Launch the game with our config proxy
+    riot::process::launch_riot_client(&game, config_port)?;
 
+    // 6. Update state
+    {
+        let mut inner = state.inner.lock().unwrap();
+        inner.proxy_status = ProxyStatus::Running;
+        inner.connected_game = Some(game);
+        inner.mode_tx = Some(proxy_handle.mode_tx);
+        inner.shutdown_tx = Some(proxy_handle.shutdown_tx);
+        inner.config_shutdown_tx = Some(config_handle.shutdown_tx);
+    }
+
+    // 7. Spawn a task to update proxy target once real chat host is discovered
+    tokio::spawn(async move {
+        let mut rx = chat_host_rx;
+        while rx.changed().await.is_ok() {
+            if let Some(host) = rx.borrow().clone() {
+                log::info!("Real chat host discovered: {host}");
+                // The proxy is already running with the default host.
+                // In a more advanced version, we'd dynamically update the target.
+                break;
+            }
+        }
+    });
+
+    let inner = state.inner.lock().unwrap();
     Ok(StatusInfo {
         stealth_mode: inner.stealth_mode.clone(),
         proxy_status: inner.proxy_status.clone(),
@@ -83,20 +123,18 @@ pub fn stop_proxy(state: State<'_, AppState>) -> StatusInfo {
     if let Some(tx) = inner.shutdown_tx.take() {
         let _ = tx.send(true);
     }
+    if let Some(tx) = inner.config_shutdown_tx.take() {
+        let _ = tx.send(true);
+    }
     inner.mode_tx = None;
     inner.proxy_status = ProxyStatus::Idle;
+    inner.connected_game = None;
 
     StatusInfo {
         stealth_mode: inner.stealth_mode.clone(),
         proxy_status: inner.proxy_status.clone(),
         connected_game: inner.connected_game.clone(),
     }
-}
-
-#[tauri::command]
-pub fn launch_game(game: String, _state: State<'_, AppState>) -> Result<String, String> {
-    // TODO: Phase 4 — actually launch the game with proxy
-    Ok(format!("Would launch: {game}"))
 }
 
 #[tauri::command]
@@ -127,9 +165,26 @@ pub fn install_ca(app: AppHandle) -> Result<(), String> {
     certs::install_ca_system(&data_dir)
 }
 
+#[tauri::command]
+pub fn get_regions() -> Vec<RegionInfo> {
+    riot::config::REGIONS
+        .iter()
+        .map(|(code, name)| RegionInfo {
+            code: code.to_string(),
+            name: name.to_string(),
+        })
+        .collect()
+}
+
 #[derive(serde::Serialize)]
 pub struct CertStatus {
     pub ca_generated: bool,
     pub server_generated: bool,
     pub ca_trusted: bool,
+}
+
+#[derive(serde::Serialize)]
+pub struct RegionInfo {
+    pub code: String,
+    pub name: String,
 }
