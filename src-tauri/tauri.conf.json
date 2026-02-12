@@ -16,7 +16,11 @@
         "width": 420,
         "height": 520,
         "resizable": false,
-        "center": true
+        "visible": false,
+        "decorations": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "shadow": true
       }
     ],
     "security": {

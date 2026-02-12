@@ -37,11 +37,15 @@ pub fn run() {
             setup_tray(app)?;
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            tauri::WindowEvent::Focused(false) => {
+                let _ = window.hide();
+            }
+            _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -80,6 +84,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     TrayIconBuilder::new()
+        .icon(app.default_window_icon().unwrap().clone())
         .tooltip("Where Is Teemo")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -104,7 +109,6 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             }
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
@@ -128,14 +132,26 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
+                rect,
                 ..
             } = event
             {
                 let app = tray.app_handle();
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.unminimize();
-                    let _ = window.show();
-                    let _ = window.set_focus();
+                    if window.is_visible().unwrap_or(false) {
+                        let _ = window.hide();
+                    } else {
+                        // Position window centered below tray icon
+                        let scale = window.scale_factor().unwrap_or(1.0);
+                        let pos = rect.position.to_logical::<f64>(scale);
+                        let size = rect.size.to_logical::<f64>(scale);
+                        let window_width = 420.0_f64;
+                        let x = pos.x + (size.width / 2.0) - (window_width / 2.0);
+                        let y = pos.y + size.height;
+                        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
                 }
             }
         })
