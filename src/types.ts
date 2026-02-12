@@ -10,3 +10,9 @@ export type StatusInfo = {
   proxy_status: ProxyStatus;
   connected_game: string | null;
 };
+
+export type CertStatus = {
+  ca_generated: boolean;
+  server_generated: boolean;
+  ca_trusted: boolean;
+};
