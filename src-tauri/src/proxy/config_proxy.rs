@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
 use http_body_util::Full;
 use hyper::body::Bytes;
@@ -22,6 +23,7 @@ pub struct ConfigProxyHandle {
 struct ProxyState {
     chat_port: u16,
     chat_host_tx: watch::Sender<Option<String>>,
+    http_client: reqwest::Client,
 }
 
 /// Start a local HTTP server that proxies Riot client config requests.
@@ -38,9 +40,19 @@ pub async fn start_config_proxy(chat_port: u16) -> Result<ConfigProxyHandle, Str
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     let (chat_host_tx, chat_host_rx) = watch::channel(None);
 
+    let http_client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(Duration::from_secs(15))
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .build()
+        .unwrap();
+
     let state = Arc::new(ProxyState {
         chat_port,
         chat_host_tx,
+        http_client,
     });
 
     tokio::spawn(async move {
@@ -93,29 +105,29 @@ async fn handle_request(
     req: Request<hyper::body::Incoming>,
     state: &ProxyState,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let path = req.uri().path().to_string();
-    log::info!("Config proxy request: {path}");
+    // Build upstream URL preserving path AND query string
+    let path_and_query = req
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or("/");
+    let upstream_url = format!("{RIOT_CONFIG_URL}{path_and_query}");
 
-    let upstream_url = format!("{RIOT_CONFIG_URL}{path}");
+    log::info!("Config proxy: {} {path_and_query}", req.method());
 
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap();
+    let mut upstream_req = state.http_client.get(&upstream_url);
 
-    let mut upstream_req = client.get(&upstream_url);
-
-    // Forward relevant headers
+    // Forward only the headers Riot needs (matching Deceive's behavior)
     for header in ["user-agent", "x-riot-entitlements-jwt", "authorization"] {
         if let Some(val) = req.headers().get(header) {
-            upstream_req = upstream_req.header(header, val.as_bytes());
+            upstream_req = upstream_req.header(header, val);
         }
     }
 
     let response = match upstream_req.send().await {
         Ok(resp) => resp,
         Err(e) => {
-            log::error!("Config proxy upstream request failed: {e}");
+            log::error!("Config proxy upstream failed: {e}");
             return Ok(Response::builder()
                 .status(502)
                 .body(Full::new(Bytes::from(format!("Upstream error: {e}"))))
@@ -124,6 +136,15 @@ async fn handle_request(
     };
 
     let status = response.status();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    log::debug!("Config proxy upstream response: {status} ({content_type})");
+
     let body = match response.text().await {
         Ok(b) => b,
         Err(e) => {
@@ -135,22 +156,35 @@ async fn handle_request(
         }
     };
 
-    // Try to parse and modify the config JSON
-    let modified_body = match patch_config(&body, state) {
-        Some(patched) => patched,
-        None => body,
+    // Only patch JSON responses that contain chat config keys
+    let final_body = if content_type.contains("json") {
+        match patch_config(&body, state) {
+            Some(patched) => patched,
+            None => body,
+        }
+    } else {
+        body
     };
 
     Ok(Response::builder()
         .status(status.as_u16())
-        .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(modified_body)))
+        .header("content-type", &content_type)
+        .body(Full::new(Bytes::from(final_body)))
         .unwrap())
 }
 
 fn patch_config(body: &str, state: &ProxyState) -> Option<String> {
     let mut config: serde_json::Value = serde_json::from_str(body).ok()?;
     let obj = config.as_object_mut()?;
+
+    // Only patch if this response actually has chat config
+    let has_chat_config = obj.contains_key("chat.host")
+        || obj.contains_key("chat.port")
+        || obj.contains_key("chat.affinities");
+
+    if !has_chat_config {
+        return None;
+    }
 
     // Extract and replace chat.host
     if let Some(host_val) = obj.get("chat.host") {
@@ -182,7 +216,7 @@ fn patch_config(body: &str, state: &ProxyState) -> Option<String> {
         }
     }
 
-    // Allow bad certs (since we're using our self-signed cert)
+    // Allow bad certs (only when we're patching chat config)
     obj.insert(
         "chat.allow_bad_cert.enabled".to_string(),
         serde_json::Value::Bool(true),

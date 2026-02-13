@@ -64,6 +64,7 @@ pub fn find_riot_client() -> Option<PathBuf> {
 fn find_riot_client_macos() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = vec![
         PathBuf::from("/Applications/Riot Client.app/Contents/MacOS/RiotClientServices"),
+        PathBuf::from("/Users/Shared/Riot Games/Riot Client.app/Contents/MacOS/RiotClientServices"),
     ];
 
     if let Some(home) = dirs::home_dir() {
@@ -73,12 +74,15 @@ fn find_riot_client_macos() -> Option<PathBuf> {
     }
 
     for path in &candidates {
+        log::debug!("Checking Riot Client path: {}", path.display());
         if path.exists() {
+            log::info!("Found Riot Client at: {}", path.display());
             return Some(path.clone());
         }
     }
 
     // Try to find via RiotClientInstalls.json
+    log::debug!("Checking RiotClientInstalls.json");
     find_from_installs_json()
 }
 
@@ -153,8 +157,10 @@ pub fn launch_riot_client(
     game: &str,
     config_proxy_port: u16,
 ) -> Result<(), String> {
-    let client_path = find_riot_client()
-        .ok_or("Riot Client not found. Is it installed?")?;
+    let client_path = find_riot_client().ok_or_else(|| {
+        log::error!("Riot Client not found at any known path");
+        "Riot Client not found. Is it installed?".to_string()
+    })?;
 
     let config_url = format!("http://127.0.0.1:{config_proxy_port}");
 
@@ -178,6 +184,7 @@ pub fn launch_riot_client(
                 "--args",
                 &format!("--client-config-url={config_url}"),
                 launch_product,
+                "--launch-patchline=live",
             ])
             .spawn()
             .map_err(|e| format!("Failed to launch Riot Client: {e}"))?;
@@ -189,6 +196,7 @@ pub fn launch_riot_client(
             .args([
                 &format!("--client-config-url=\"{config_url}\""),
                 launch_product,
+                "--launch-patchline=live",
             ])
             .spawn()
             .map_err(|e| format!("Failed to launch Riot Client: {e}"))?;
