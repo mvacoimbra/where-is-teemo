@@ -80,41 +80,69 @@ pub fn find_stanza_end(buffer: &str) -> Option<usize> {
         return None;
     }
 
-    // Pass through XML declarations and stream opening/features
-    // These are special and should not be buffered as stanzas
-    for prefix in &["<?xml", "<stream:stream", "<stream:features"] {
-        if trimmed.starts_with(prefix) {
-            // Find the end of this element
-            if let Some(pos) = trimmed.find('>') {
-                let offset = buffer.len() - trimmed.len();
-                return Some(offset + pos + 1);
-            }
-            return None;
+    let offset = buffer.len() - trimmed.len();
+
+    // XML processing instructions: <?xml ... ?>
+    if trimmed.starts_with("<?") {
+        if let Some(pos) = trimmed.find("?>") {
+            return Some(offset + pos + 2);
         }
+        return None;
     }
 
-    // Handle </stream:stream> close
-    if trimmed.starts_with("</stream:stream>") {
-        let offset = buffer.len() - trimmed.len();
-        return Some(offset + "</stream:stream>".len());
+    // Closing tags like </stream:stream>
+    if trimmed.starts_with("</") {
+        if let Some(pos) = trimmed.find('>') {
+            return Some(offset + pos + 1);
+        }
+        return None;
+    }
+
+    // Must start with '<' for an opening tag
+    if !trimmed.starts_with('<') {
+        // Non-XML data — forward up to the next '<' or end of buffer
+        return Some(offset + trimmed.find('<').unwrap_or(trimmed.len()));
     }
 
     // Self-closing tags: <tag ... />
-    if let Some(pos) = find_self_closing_end(buffer) {
-        return Some(pos);
+    if let Some(pos) = find_self_closing_end(trimmed) {
+        return Some(offset + pos);
     }
 
-    // Look for known stanza closing tags
-    for close_tag in &["</presence>", "</message>", "</iq>", "</stream:features>"] {
-        if let Some(pos) = buffer.find(close_tag) {
-            return Some(pos + close_tag.len());
+    // Extract the tag name to find its closing tag dynamically
+    let tag_name = extract_tag_name(trimmed)?;
+
+    // <stream:stream> is a stream-level open — ends at '>', never closed in same stanza
+    if tag_name == "stream:stream" {
+        if let Some(pos) = trimmed.find('>') {
+            return Some(offset + pos + 1);
         }
+        return None;
+    }
+
+    // Look for the matching closing tag </tagname>
+    let close_tag = format!("</{tag_name}>");
+    if let Some(pos) = trimmed.find(&close_tag) {
+        return Some(offset + pos + close_tag.len());
     }
 
     None
 }
 
-/// Find end of self-closing tag like <presence ... />
+/// Extract the element name from an opening tag (e.g. "<auth " → "auth").
+fn extract_tag_name(s: &str) -> Option<&str> {
+    let after_lt = &s[1..]; // skip '<'
+    let end = after_lt.find(|c: char| c.is_whitespace() || c == '>' || c == '/')?;
+    if end == 0 {
+        return None;
+    }
+    Some(&after_lt[..end])
+}
+
+/// Find end of a self-closing opening tag like `<presence ... />`.
+/// Only matches `/>` that belongs to the root element — if we see a bare `>`
+/// first (closing the opening tag), the element has body content and is NOT
+/// self-closing, so we return None.
 fn find_self_closing_end(buffer: &str) -> Option<usize> {
     let mut in_quotes = false;
     let mut quote_char = '"';
@@ -132,6 +160,11 @@ fn find_self_closing_end(buffer: &str) -> Option<usize> {
                 if buffer[i + 1..].starts_with('>') {
                     return Some(i + 2);
                 }
+            }
+            '>' if !in_quotes => {
+                // A bare '>' before any '/>' means the opening tag closed and
+                // element has body content — not a self-closing tag.
+                return None;
             }
             _ => {}
         }
@@ -203,5 +236,43 @@ mod tests {
         let result = filter_outgoing(stanza, &StealthMode::Offline);
         assert!(result.contains(r#"type="unavailable""#));
         assert!(!result.contains(r#"type="available""#));
+    }
+
+    #[test]
+    fn test_find_stanza_end_auth() {
+        let buf = r#"<auth xmlns="urn:ietf:params:xml:ns:xmpp-sasl" mechanism="X-Riot-RSO">dG9rZW4=</auth>"#;
+        assert_eq!(find_stanza_end(buf), Some(buf.len()));
+    }
+
+    #[test]
+    fn test_find_stanza_end_xml_declaration() {
+        let buf = r#"<?xml version='1.0'?>"#;
+        assert_eq!(find_stanza_end(buf), Some(buf.len()));
+    }
+
+    #[test]
+    fn test_find_stanza_end_close_stream() {
+        let buf = "</stream:stream>";
+        assert_eq!(find_stanza_end(buf), Some(buf.len()));
+    }
+
+    #[test]
+    fn test_find_stanza_end_stream_features() {
+        let buf = r#"<stream:features><mechanisms xmlns="urn:ietf:params:xml:ns:xmpp-sasl"><mechanism>X-Riot-RSO</mechanism></mechanisms></stream:features>"#;
+        assert_eq!(find_stanza_end(buf), Some(buf.len()));
+    }
+
+    #[test]
+    fn test_find_stanza_end_response() {
+        let buf = r#"<response xmlns="urn:ietf:params:xml:ns:xmpp-sasl">dG9rZW4=</response>"#;
+        assert_eq!(find_stanza_end(buf), Some(buf.len()));
+    }
+
+    #[test]
+    fn test_find_stanza_end_child_self_closing_not_confused() {
+        // A presence stanza with a self-closing child element (<pty/>) should
+        // NOT be split at <pty/> — it must wait for </presence>.
+        let buf = r#"<presence id='5'><show>chat</show><games><keystone><pty/></keystone></games></presence>"#;
+        assert_eq!(find_stanza_end(buf), Some(buf.len()));
     }
 }

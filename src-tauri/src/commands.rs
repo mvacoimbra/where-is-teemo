@@ -23,10 +23,13 @@ pub fn set_stealth_mode(mode: String, state: State<'_, AppState>) -> StatusInfo 
         "online" => StealthMode::Online,
         _ => StealthMode::Offline,
     };
+    log::info!("Stealth mode changed: {:?} → {:?}", inner.stealth_mode, new_mode);
     inner.stealth_mode = new_mode.clone();
 
     if let Some(tx) = &inner.mode_tx {
         let _ = tx.send(new_mode);
+    } else {
+        log::warn!("No mode channel — proxy not running, mode change won't take effect until next launch");
     }
 
     StatusInfo {
@@ -89,7 +92,14 @@ pub async fn launch_game(
     .await?;
 
     // 5. Launch the game with our config proxy
-    riot::process::launch_riot_client(&game, config_port)?;
+    log::info!("Launching game '{game}' via config proxy on port {config_port}");
+    if let Err(e) = riot::process::launch_riot_client(&game, config_port) {
+        log::error!("Failed to launch game: {e}");
+        // Clean up proxies since launch failed
+        let _ = proxy_handle.shutdown_tx.send(true);
+        let _ = config_handle.shutdown_tx.send(true);
+        return Err(e);
+    }
 
     // 6. Update state
     {
@@ -101,14 +111,14 @@ pub async fn launch_game(
         inner.config_shutdown_tx = Some(config_handle.shutdown_tx);
     }
 
-    // 7. Spawn a task to update proxy target once real chat host is discovered
+    // 7. Spawn a task to update XMPP proxy target once real chat host is discovered
+    let host_tx = proxy_handle.host_tx;
     tokio::spawn(async move {
         let mut rx = chat_host_rx;
         while rx.changed().await.is_ok() {
             if let Some(host) = rx.borrow().clone() {
-                log::info!("Real chat host discovered: {host}");
-                // The proxy is already running with the default host.
-                // In a more advanced version, we'd dynamically update the target.
+                log::info!("Real chat host discovered: {host} — updating XMPP proxy target");
+                let _ = host_tx.send(host);
                 break;
             }
         }

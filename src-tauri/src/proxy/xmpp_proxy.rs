@@ -12,7 +12,6 @@ use crate::state::StealthMode;
 
 pub struct ProxyConfig {
     pub listen_addr: String,
-    pub remote_host: String,
     pub remote_port: u16,
     pub server_cert_pem: String,
     pub server_key_pem: String,
@@ -23,12 +22,12 @@ pub struct ProxyConfig {
 /// Start the XMPP TLS proxy. Blocks until the shutdown signal is received.
 pub async fn run_proxy(
     config: ProxyConfig,
+    host_rx: watch::Receiver<String>,
     mode_rx: watch::Receiver<StealthMode>,
     mut shutdown_rx: watch::Receiver<bool>,
 ) -> Result<(), String> {
     let tls_acceptor = build_tls_acceptor(&config)?;
     let tls_connector = build_tls_connector(&config)?;
-    let remote_host = config.remote_host.clone();
     let remote_port = config.remote_port;
 
     let listener = TcpListener::bind(&config.listen_addr)
@@ -52,7 +51,7 @@ pub async fn run_proxy(
 
                 let acceptor = tls_acceptor.clone();
                 let connector = tls_connector.clone();
-                let host = remote_host.clone();
+                let host = host_rx.borrow().clone();
                 let mode = mode_rx.clone();
 
                 tokio::spawn(async move {
@@ -81,7 +80,7 @@ async fn handle_connection(
     connector: TlsConnector,
     remote_host: &str,
     remote_port: u16,
-    mode_rx: watch::Receiver<StealthMode>,
+    mut mode_rx: watch::Receiver<StealthMode>,
 ) -> Result<(), String> {
     // Accept TLS from Riot client
     let client_tls = acceptor
@@ -121,6 +120,8 @@ async fn handle_connection(
                     break;
                 }
             };
+            let preview: String = String::from_utf8_lossy(&buf[..n]).chars().take(120).collect();
+            log::debug!("S→C: {preview}");
             if let Err(e) = client_write.write_all(&buf[..n]).await {
                 log::error!("Write to client failed: {e}");
                 break;
@@ -128,32 +129,78 @@ async fn handle_connection(
         }
     });
 
-    // Client → Server: filter presence stanzas
+    // Client → Server: filter presence stanzas + inject on mode toggle
     let client_to_server = tokio::spawn(async move {
         let mut buf = vec![0u8; 8192];
         let mut stanza_buf = String::new();
+        let mut last_presence = String::new();
+        let mut watch_mode = true;
 
         loop {
-            let n = match client_read.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => n,
-                Err(e) => {
-                    log::error!("Read from client failed: {e}");
-                    break;
+            tokio::select! {
+                result = client_read.read(&mut buf) => {
+                    let n = match result {
+                        Ok(0) => break,
+                        Ok(n) => n,
+                        Err(e) => {
+                            log::error!("Read from client failed: {e}");
+                            break;
+                        }
+                    };
+
+                    stanza_buf.push_str(&String::from_utf8_lossy(&buf[..n]));
+
+                    while let Some(end) = presence::find_stanza_end(&stanza_buf) {
+                        let stanza: String = stanza_buf.drain(..end).collect();
+
+                        // Cache raw presence before filtering (skip unavailable ones)
+                        if stanza.trim_start().starts_with("<presence")
+                            && !stanza.contains("type=\"unavailable\"")
+                        {
+                            last_presence = stanza.clone();
+                        }
+
+                        let mode = mode_rx.borrow().clone();
+                        let filtered = presence::filter_outgoing(&stanza, &mode);
+
+                        let preview: String = filtered.chars().take(120).collect();
+                        log::debug!("C→S: {preview}");
+
+                        if let Err(e) = server_write.write_all(filtered.as_bytes()).await {
+                            log::error!("Write to server failed: {e}");
+                            return;
+                        }
+                    }
                 }
-            };
+                result = mode_rx.changed(), if watch_mode => {
+                    if result.is_err() {
+                        watch_mode = false;
+                        continue;
+                    }
 
-            stanza_buf.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    let mode = mode_rx.borrow().clone();
+                    let inject = match mode {
+                        StealthMode::Offline => {
+                            log::info!("Mode → Offline: injecting unavailable presence");
+                            r#"<presence type="unavailable"/>"#.to_string()
+                        }
+                        StealthMode::Online => {
+                            if last_presence.is_empty() {
+                                log::info!("Mode → Online: injecting basic available presence");
+                                "<presence/>".to_string()
+                            } else {
+                                log::info!("Mode → Online: re-sending last cached presence");
+                                last_presence.clone()
+                            }
+                        }
+                    };
 
-            // Process all complete stanzas in the buffer
-            while let Some(end) = presence::find_stanza_end(&stanza_buf) {
-                let stanza: String = stanza_buf.drain(..end).collect();
-                let mode = mode_rx.borrow().clone();
-                let filtered = presence::filter_outgoing(&stanza, &mode);
+                    log::debug!("Injected: {}", inject.chars().take(120).collect::<String>());
 
-                if let Err(e) = server_write.write_all(filtered.as_bytes()).await {
-                    log::error!("Write to server failed: {e}");
-                    return;
+                    if let Err(e) = server_write.write_all(inject.as_bytes()).await {
+                        log::error!("Write to server (inject) failed: {e}");
+                        return;
+                    }
                 }
             }
         }
