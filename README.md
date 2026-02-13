@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/mvacoimbra/where-is-teemo/main/src-tauri/icons/128x128%402x.png" width="128" height="128" alt="Where Is Teemo icon" />
+</p>
+
 # Where Is Teemo?
 
 > Nowhere to be found.
@@ -30,6 +34,13 @@ Riot Client ──TLS──▶ localhost:5223 (XMPP Proxy) ──TLS──▶ Ri
 - **Auto region detection** — detects your chat server from Riot's config, with manual override for 16 regions
 - **Toggle visibility** — switch between Invisible and Online at any time, even mid-game
 - **Cross-platform** — macOS and Windows support
+
+## Download
+
+Grab the latest release for your platform from [GitHub Releases](https://github.com/mvacoimbra/where-is-teemo/releases):
+
+- **macOS** — `.dmg` (universal binary: Apple Silicon + Intel)
+- **Windows** — `.msi` installer or `.exe` (NSIS)
 
 ## Screenshots
 
