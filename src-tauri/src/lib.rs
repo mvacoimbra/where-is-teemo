@@ -4,6 +4,7 @@ mod riot;
 mod state;
 
 use state::AppState;
+use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
@@ -45,6 +46,11 @@ pub fn run() {
             tauri::WindowEvent::Focused(false) => {
                 let _ = window.hide();
             }
+            tauri::WindowEvent::ThemeChanged(theme) => {
+                if let Some(tray) = window.app_handle().tray_by_id("main-tray") {
+                    let _ = tray.set_icon(Some(tray_icon_for_theme(*theme)));
+                }
+            }
             _ => {}
         })
         .run(tauri::generate_context!())
@@ -62,6 +68,15 @@ fn setup_certs(data_dir: &std::path::Path) {
         Err(e) => {
             log::error!("Failed to ensure CA: {e}");
         }
+    }
+}
+
+fn tray_icon_for_theme(theme: tauri::Theme) -> Image<'static> {
+    match theme {
+        tauri::Theme::Dark => {
+            Image::from_bytes(include_bytes!("../icons/icon-colored-white.png")).unwrap()
+        }
+        _ => Image::from_bytes(include_bytes!("../icons/icon-colored-black.png")).unwrap(),
     }
 }
 
@@ -83,8 +98,13 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         ],
     )?;
 
-    TrayIconBuilder::new()
-        .icon(app.default_window_icon().unwrap().clone())
+    let theme = app
+        .get_webview_window("main")
+        .and_then(|w| w.theme().ok())
+        .unwrap_or(tauri::Theme::Dark);
+
+    TrayIconBuilder::with_id("main-tray")
+        .icon(tray_icon_for_theme(theme))
         .tooltip("Where Is Teemo")
         .menu(&menu)
         .show_menu_on_left_click(false)
