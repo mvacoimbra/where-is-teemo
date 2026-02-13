@@ -42,6 +42,8 @@ Grab the latest release for your platform from [GitHub Releases](https://github.
 - **macOS** — `.dmg` (universal binary: Apple Silicon + Intel)
 - **Windows** — `.msi` installer or `.exe` (NSIS)
 
+See the [Installation Guide](docs/INSTALLATION.md) for step-by-step instructions, including how to bypass macOS Gatekeeper and Windows SmartScreen.
+
 ## Screenshots
 
 The app runs as a popover anchored to your macOS status bar icon (or Windows system tray):
