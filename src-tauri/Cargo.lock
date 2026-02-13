@@ -5297,11 +5297,13 @@ dependencies = [
 name = "where-is-teemo"
 version = "0.1.0"
 dependencies = [
+ "block2",
  "env_logger",
  "http-body-util",
  "hyper",
  "hyper-util",
  "log",
+ "objc2",
  "rcgen",
  "reqwest 0.12.28",
  "rustls",

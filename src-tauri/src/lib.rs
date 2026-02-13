@@ -36,14 +36,13 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             setup_certs(&data_dir);
             setup_tray(app)?;
+            #[cfg(target_os = "macos")]
+            setup_click_outside_handler(app);
             Ok(())
         })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
-                let _ = window.hide();
-            }
-            tauri::WindowEvent::Focused(false) => {
                 let _ = window.hide();
             }
             tauri::WindowEvent::ThemeChanged(theme) => {
@@ -77,6 +76,33 @@ fn tray_icon_for_theme(theme: tauri::Theme) -> Image<'static> {
             Image::from_bytes(include_bytes!("../icons/icon-colored-white.png")).unwrap()
         }
         _ => Image::from_bytes(include_bytes!("../icons/icon-colored-black.png")).unwrap(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn setup_click_outside_handler(app: &tauri::App) {
+    use block2::RcBlock;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2::msg_send;
+    use std::ptr::NonNull;
+
+    let handle = app.handle().clone();
+
+    // NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown
+    let mask: u64 = (1 << 1) | (1 << 3);
+
+    let block = RcBlock::new(move |_event: NonNull<AnyObject>| {
+        if let Some(window) = handle.get_webview_window("main") {
+            if window.is_visible().unwrap_or(false) {
+                let _ = window.hide();
+            }
+        }
+    });
+
+    let cls = AnyClass::get(c"NSEvent").expect("NSEvent class not found");
+    unsafe {
+        let _: *mut AnyObject =
+            msg_send![cls, addGlobalMonitorForEventsMatchingMask: mask, handler: &*block];
     }
 }
 
