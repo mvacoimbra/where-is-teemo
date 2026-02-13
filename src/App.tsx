@@ -14,6 +14,7 @@ function App() {
   const [selectedRegion, setSelectedRegion] = useState("");
   const [installing, setInstalling] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     invoke<StatusInfo>("get_status").then(setStatus);
@@ -31,11 +32,12 @@ function App() {
 
   async function handleLaunch(game: string) {
     setLaunching(true);
+    setError(null);
     try {
       const updated = await invoke<StatusInfo>("launch_game", { game });
       setStatus(updated);
     } catch (e) {
-      console.error("Launch failed:", e);
+      setError(String(e));
     } finally {
       setLaunching(false);
     }
@@ -44,6 +46,7 @@ function App() {
   async function handleStop() {
     const updated = await invoke<StatusInfo>("stop_proxy");
     setStatus(updated);
+    setError(null);
   }
 
   async function handleInstallCa() {
@@ -53,7 +56,7 @@ function App() {
       const updated = await invoke<CertStatus>("get_cert_status");
       setCertStatus(updated);
     } catch (e) {
-      console.error("Failed to install CA:", e);
+      setError(String(e));
     } finally {
       setInstalling(false);
     }
@@ -65,7 +68,7 @@ function App() {
       try {
         await invoke("set_region", { region: code });
       } catch (e) {
-        console.error("Failed to set region:", e);
+        setError(String(e));
       }
     }
   }
@@ -77,43 +80,63 @@ function App() {
 
   return (
     <main className="container">
-      <h1>Where Is Teemo?</h1>
-      <p className="subtitle">Nowhere to be found.</p>
+      <header className="header">
+        <img src="/icon.png" alt="WIT" className="app-icon" />
+        <div className="header-text">
+          <h1>Where Is Teemo?</h1>
+          <span className="version">v0.1.0</span>
+        </div>
+      </header>
 
       {needsCaInstall && (
-        <div className="cert-banner">
-          <p>Certificate not trusted yet. Install it to enable the proxy.</p>
+        <div className="banner banner-warn">
+          <p>Certificado ainda nao confiavel. Instale para ativar o proxy.</p>
           <button
-            className="cert-btn"
+            className="btn btn-outline-warn"
             onClick={handleInstallCa}
             disabled={installing}
           >
-            {installing ? "Installing..." : "Trust Certificate"}
+            {installing ? "Instalando..." : "Confiar no Certificado"}
           </button>
         </div>
       )}
 
-      <div className="status-section">
+      {error && (
+        <div className="banner banner-error">
+          <p>{error}</p>
+          <button className="dismiss" onClick={() => setError(null)}>
+            x
+          </button>
+        </div>
+      )}
+
+      <div className="card">
         <button
-          className={`stealth-toggle ${isOffline ? "active" : ""}`}
+          className={`stealth-toggle ${isOffline ? "invisible" : "online"}`}
           onClick={toggleStealth}
         >
-          <span className={`status-dot ${isOffline ? "offline" : "online"}`} />
-          {isOffline ? "Invisible" : "Online"}
+          <span className="toggle-dot" />
+          <div className="toggle-text">
+            <span className="toggle-label">
+              {isOffline ? "Invisivel" : "Online"}
+            </span>
+            <span className="toggle-hint">
+              {isOffline
+                ? "Seus amigos nao te veem online"
+                : "Voce esta visivel para amigos"}
+            </span>
+          </div>
         </button>
-        <p className="status-hint">
-          {isOffline
-            ? "You will appear offline to friends"
-            : "You are visible to friends"}
-        </p>
       </div>
 
-      <div className="region-selector">
+      <div className="card">
+        <label className="field-label">Regiao</label>
         <select
+          className="select"
           value={selectedRegion}
           onChange={(e) => handleRegionChange(e.target.value)}
         >
-          <option value="">Auto-detect region</option>
+          <option value="">Auto-detectar</option>
           {regions.map((r) => (
             <option key={r.code} value={r.code}>
               {r.name}
@@ -123,50 +146,51 @@ function App() {
       </div>
 
       {!isRunning ? (
-        <div className="game-buttons">
-          <button
-            className="game-btn lol"
-            onClick={() => handleLaunch("league_of_legends")}
-            disabled={launching}
-          >
-            {launching ? "Launching..." : "Launch LoL"}
-          </button>
-          <button
-            className="game-btn val"
-            onClick={() => handleLaunch("valorant")}
-            disabled={launching}
-          >
-            {launching ? "Launching..." : "Launch VALORANT"}
-          </button>
+        <div className="launch-section">
+          <div className="game-buttons">
+            <button
+              className="btn btn-game btn-lol"
+              onClick={() => handleLaunch("league_of_legends")}
+              disabled={launching}
+            >
+              {launching ? "Abrindo..." : "League of Legends"}
+            </button>
+            <button
+              className="btn btn-game btn-val"
+              onClick={() => handleLaunch("valorant")}
+              disabled={launching}
+            >
+              {launching ? "Abrindo..." : "VALORANT"}
+            </button>
+          </div>
+          <p className="launch-hint">
+            O jogo precisa ser aberto pelo WIT para o modo invisivel funcionar.
+            Se ja estiver aberto, ele sera reiniciado.
+          </p>
         </div>
       ) : (
-        <div className="game-buttons">
-          <button className="game-btn stop" onClick={handleStop}>
-            Stop Proxy
-          </button>
-          {status.connected_game && (
-            <span className="running-game">
-              Playing: {status.connected_game.replace("_", " ")}
+        <div className="running-section">
+          <div className="running-info">
+            <span className="running-dot" />
+            <span className="running-label">
+              Proxy ativo
+              {status.connected_game &&
+                ` — ${status.connected_game.replace("_", " ")}`}
             </span>
-          )}
+          </div>
+          <button className="btn btn-stop" onClick={handleStop}>
+            Parar
+          </button>
         </div>
       )}
 
-      <div className="proxy-status">
-        {certStatus && (
-          <span className="cert-info">
-            CA: {certStatus.ca_generated ? "generated" : "missing"}
-            {certStatus.ca_generated &&
-              (certStatus.ca_trusted ? " (trusted)" : " (not trusted)")}
-            {" | "}
-          </span>
-        )}
-        {isRunning
-          ? "Proxy active"
-          : status.proxy_status === "Idle"
-            ? "Proxy idle"
-            : `Error: ${typeof status.proxy_status === "object" ? status.proxy_status.Error : ""}`}
-      </div>
+      <footer className="footer">
+        <span>
+          {certStatus?.ca_trusted ? "CA OK" : "CA pendente"}
+          {" · "}
+          {isRunning ? "Proxy ativo" : "Proxy parado"}
+        </span>
+      </footer>
     </main>
   );
 }

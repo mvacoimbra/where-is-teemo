@@ -11,7 +11,7 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug"))
         .format_timestamp_secs()
         .init();
 
@@ -165,7 +165,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                         let scale = window.scale_factor().unwrap_or(1.0);
                         let pos = rect.position.to_logical::<f64>(scale);
                         let size = rect.size.to_logical::<f64>(scale);
-                        let window_width = 420.0_f64;
+                        let window_width = 380.0_f64;
                         let x = pos.x + (size.width / 2.0) - (window_width / 2.0);
                         let y = pos.y + size.height;
                         let _ = window.set_position(tauri::LogicalPosition::new(x, y));
