@@ -187,14 +187,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     if window.is_visible().unwrap_or(false) {
                         let _ = window.hide();
                     } else {
-                        // Position window centered below tray icon
-                        let scale = window.scale_factor().unwrap_or(1.0);
-                        let pos = rect.position.to_logical::<f64>(scale);
-                        let size = rect.size.to_logical::<f64>(scale);
-                        let window_width = 380.0_f64;
-                        let x = pos.x + (size.width / 2.0) - (window_width / 2.0);
-                        let y = pos.y + size.height;
-                        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+                        position_window_near_tray(&window, rect.position, rect.size);
                         let _ = window.show();
                         let _ = window.set_focus();
                     }
@@ -204,4 +197,96 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .build(app)?;
 
     Ok(())
+}
+
+fn position_window_near_tray<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    pos: tauri::Position,
+    size: tauri::Size,
+) {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let tray_pos = pos.to_logical::<f64>(scale);
+    let tray_size = size.to_logical::<f64>(scale);
+
+    #[cfg(target_os = "windows")]
+    let (x, y) = {
+        const W: f64 = 380.0;
+        const H: f64 = 480.0;
+        smart_position_windows(window, &tray_pos, &tray_size, scale, W, H)
+            .unwrap_or_else(|| {
+                // Fallback: above the tray icon
+                (tray_pos.x + tray_size.width / 2.0 - W / 2.0, tray_pos.y - H)
+            })
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let (x, y) = (
+        tray_pos.x + tray_size.width / 2.0 - 380.0_f64 / 2.0,
+        tray_pos.y + tray_size.height,
+    );
+
+    let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+}
+
+/// Detects which edge of the screen the taskbar is on (by finding the edge
+/// nearest to the tray icon) and positions the popup window on the opposite side.
+#[cfg(target_os = "windows")]
+fn smart_position_windows<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    tray_pos: &tauri::LogicalPosition<f64>,
+    tray_size: &tauri::LogicalSize<f64>,
+    scale: f64,
+    window_w: f64,
+    window_h: f64,
+) -> Option<(f64, f64)> {
+    // Convert tray center to physical pixels to match monitor coordinates
+    let cx_phys = (tray_pos.x + tray_size.width / 2.0) * scale;
+    let cy_phys = (tray_pos.y + tray_size.height / 2.0) * scale;
+
+    let monitors = window.available_monitors().ok()?;
+
+    // Find the monitor that contains the tray icon center
+    let monitor = monitors
+        .into_iter()
+        .find(|m| {
+            let p = m.position();
+            let s = m.size();
+            cx_phys >= p.x as f64
+                && cx_phys < (p.x as f64 + s.width as f64)
+                && cy_phys >= p.y as f64
+                && cy_phys < (p.y as f64 + s.height as f64)
+        })
+        .or_else(|| window.primary_monitor().ok().flatten())?;
+
+    let mon_pos = monitor.position().to_logical::<f64>(scale);
+    let mon_size = monitor.size().to_logical::<f64>(scale);
+
+    let tray_cx = tray_pos.x + tray_size.width / 2.0;
+    let tray_cy = tray_pos.y + tray_size.height / 2.0;
+
+    // Distance from the tray icon's outer edge to each screen edge
+    let dist_top = tray_pos.y - mon_pos.y;
+    let dist_bottom = (mon_pos.y + mon_size.height) - (tray_pos.y + tray_size.height);
+    let dist_left = tray_pos.x - mon_pos.x;
+    let dist_right = (mon_pos.x + mon_size.width) - (tray_pos.x + tray_size.width);
+
+    let (mut x, mut y) = if dist_bottom <= dist_top.min(dist_left).min(dist_right) {
+        // Taskbar at bottom → window appears above tray icon
+        (tray_cx - window_w / 2.0, tray_pos.y - window_h)
+    } else if dist_top <= dist_left.min(dist_right) {
+        // Taskbar at top → window appears below tray icon
+        (tray_cx - window_w / 2.0, tray_pos.y + tray_size.height)
+    } else if dist_left <= dist_right {
+        // Taskbar at left → window appears to the right
+        (tray_pos.x + tray_size.width, tray_cy - window_h / 2.0)
+    } else {
+        // Taskbar at right → window appears to the left
+        (tray_pos.x - window_w, tray_cy - window_h / 2.0)
+    };
+
+    // Clamp so the window never goes off screen
+    x = x.clamp(mon_pos.x, mon_pos.x + mon_size.width - window_w);
+    y = y.clamp(mon_pos.y, mon_pos.y + mon_size.height - window_h);
+
+    Some((x, y))
 }
