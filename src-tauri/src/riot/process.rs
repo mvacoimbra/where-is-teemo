@@ -194,7 +194,7 @@ pub fn launch_riot_client(
     {
         std::process::Command::new(&client_path)
             .args([
-                &format!("--client-config-url=\"{config_url}\""),
+                &format!("--client-config-url={config_url}"),
                 launch_product,
                 "--launch-patchline=live",
             ])
@@ -203,6 +203,20 @@ pub fn launch_riot_client(
     }
 
     Ok(())
+}
+
+/// Check if the actual game client (not just the Riot Client launcher) is running.
+/// Used to delay XMPP proxy activation until after the patcher finishes.
+pub fn is_game_client_running(game: &str) -> bool {
+    let process_name = match game {
+        "league_of_legends" => "LeagueClient",
+        "valorant" => "VALORANT-Win64-Shipping",
+        _ => return false,
+    };
+    let s = System::new_all();
+    s.processes()
+        .values()
+        .any(|p| p.name().to_string_lossy().contains(process_name))
 }
 
 /// Add the `dirs` crate dependency for home_dir

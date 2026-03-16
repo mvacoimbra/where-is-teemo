@@ -81,13 +81,16 @@ pub async fn launch_game(
 
     log::info!("Using chat host: {chat_host}");
 
+    // Start XMPP proxy in Online (passthrough) mode so the Riot Client patcher
+    // can reach update servers without interference. Stealth mode is activated
+    // later, once the actual game client process is detected.
     let proxy_handle = proxy::start_proxy(
         chat_host,
         5223,
         server.cert_pem,
         server.key_pem,
         ca.cert_pem,
-        initial_mode,
+        StealthMode::Online,
     )
     .await?;
 
@@ -100,6 +103,9 @@ pub async fn launch_game(
         let _ = config_handle.shutdown_tx.send(true);
         return Err(e);
     }
+
+    let game_for_task = game.clone();
+    let app_for_task = app.clone();
 
     // 6. Update state
     {
@@ -123,6 +129,35 @@ pub async fn launch_game(
             }
         }
     });
+
+    // 8. Once the actual game client starts, activate the user's desired stealth mode.
+    // This avoids interfering with the Riot Client patcher during the update phase.
+    if initial_mode == StealthMode::Offline {
+        tokio::spawn(async move {
+            let start = std::time::Instant::now();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+                if start.elapsed().as_secs() > 300 {
+                    log::warn!("Timed out waiting for game client '{}' to start", game_for_task);
+                    break;
+                }
+
+                if riot::process::is_game_client_running(&game_for_task) {
+                    log::info!("Game client '{}' started — activating stealth mode", game_for_task);
+                    let s = app_for_task.state::<AppState>();
+                    let inner = s.inner.lock().unwrap();
+                    // Respect any mode change the user may have made while waiting
+                    if inner.stealth_mode == StealthMode::Offline {
+                        if let Some(tx) = &inner.mode_tx {
+                            let _ = tx.send(StealthMode::Offline);
+                        }
+                    }
+                    break;
+                }
+            }
+        });
+    }
 
     let inner = state.inner.lock().unwrap();
     Ok(StatusInfo {
