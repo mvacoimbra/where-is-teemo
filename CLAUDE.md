@@ -1,8 +1,6 @@
-# Commit Rules
+# Where Is Teemo
 
-- Follow conventional commits: `type: description` (max 72 chars)
-- Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
-- No scope (e.g. `feat: add offline mode`, NOT `feat(proxy): add offline mode`)
-- No body, no footer
-- No co-authorship notes
-- Group related changes into separate commits by type
+See `.claude/rules/` for modular project rules:
+- `where-is-teemo-project.md` — tech stack, structure, commands, commit rules
+- `where-is-teemo-tauri-patterns.md` — Tauri IPC, state, tray, platform guards
+- `where-is-teemo-proxy-architecture.md` — proxy flow, XMPP filtering, certs, channels
